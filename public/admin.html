@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel Admin — Pomofocus</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="container wide">
+  <div class="nav" id="nav"></div>
+
+  <div class="card">
+    <h2>Criar usuário</h2>
+    <form id="userForm">
+      <div class="row">
+        <label class="field"><span>Usuário</span><input type="text" id="nu" autocomplete="off"></label>
+        <label class="field"><span>Senha</span><input type="text" id="np" autocomplete="off"></label>
+        <label class="field" style="max-width:160px;"><span>Papel</span>
+          <select id="nr"><option value="user">Usuário</option><option value="admin">Admin</option></select>
+        </label>
+      </div>
+      <button class="btn btn-primary" type="submit">Criar usuário</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Usuários</h2>
+    <div class="table-wrap">
+      <table id="usersTable">
+        <thead><tr><th>Usuário</th><th>Papel</th><th>Criado em</th><th class="right">Ações</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <h2 style="margin:0;">Tarefas</h2>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
+        <span class="muted">Filtrar por usuário:</span>
+        <select id="taskUserFilter" style="width:auto;min-width:160px;"></select>
+      </label>
+    </div>
+    <form id="taskForm" class="mt">
+      <div class="row" style="align-items:flex-end;">
+        <label class="field"><span>Nova tarefa para</span><select id="taskOwner"></select></label>
+        <label class="field" style="flex:2;"><span>Título</span><input type="text" id="taskTitle" autocomplete="off"></label>
+        <label class="field" style="max-width:120px;"><span>Est. 🍅</span><input type="number" id="taskEst" value="1" min="1" max="50"></label>
+        <button class="btn btn-primary" type="submit" style="flex:0 0 auto;">Adicionar</button>
+      </div>
+    </form>
+    <div class="table-wrap mt">
+      <table id="tasksTable">
+        <thead><tr><th>Tarefa</th><th>Dono</th><th class="num">🍅</th><th class="num">Tempo</th><th>Status</th><th class="right">Ações</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+(function(){
+  "use strict";
+  let me=null, users=[], tasks=[];
+  const $ = s=>document.querySelector(s);
+
+  async function loadUsers(){
+    users = await api("/api/users");
+    // tabela
+    const tb = $("#usersTable tbody"); tb.innerHTML="";
+    users.forEach(u=>{
+      const tr=document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(u.username)}</strong></td>
+        <td><span class="tag role-${u.role}">${u.role==="admin"?"Admin":"Usuário"}</span></td>
+        <td class="muted">${fmtDateTime(u.created_at)}</td>
+        <td class="right">
+          <button class="btn btn-ghost" data-pw="${u.id}">Resetar senha</button>
+          ${u.id===me.id ? '' : `<button class="btn btn-danger" data-del="${u.id}">Excluir</button>`}
+        </td>`;
+      tb.appendChild(tr);
+    });
+    tb.querySelectorAll("[data-pw]").forEach(b=>b.onclick=()=>resetPw(b.dataset.pw));
+    tb.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>delUser(b.dataset.del));
+    // selects de usuário
+    const ownerOpts = users.map(u=>`<option value="${u.id}">${escapeHtml(u.username)}</option>`).join("");
+    $("#taskOwner").innerHTML = ownerOpts;
+    $("#taskUserFilter").innerHTML = `<option value="">Todos</option>`+ownerOpts;
+  }
+
+  async function loadTasks(){
+    const uid = $("#taskUserFilter").value;
+    tasks = await api("/api/tasks"+(uid?("?user_id="+uid):""));
+    const tb = $("#tasksTable tbody"); tb.innerHTML="";
+    if (!tasks.length){ tb.innerHTML = `<tr><td colspan="6" class="empty">Nenhuma tarefa.</td></tr>`; return; }
+    tasks.forEach(t=>{
+      const tr=document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(t.title)}</td>
+        <td class="muted">${escapeHtml(t.owner)}</td>
+        <td class="num">${t.pomos_done}/${t.estimate}</td>
+        <td class="num">${fmtDuration(t.total_seconds)}</td>
+        <td><span class="tag ${t.status==='done'?'done':'active'}">${t.status==='done'?'Concluída':'Ativa'}</span></td>
+        <td class="right">
+          <button class="btn btn-ghost" data-edit="${t.id}">Editar</button>
+          <button class="btn btn-ghost" data-toggle="${t.id}">${t.status==='done'?'Reabrir':'Concluir'}</button>
+          <button class="btn btn-danger" data-del="${t.id}">Excluir</button>
+        </td>`;
+      tb.appendChild(tr);
+    });
+    tb.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>editTask(b.dataset.edit));
+    tb.querySelectorAll("[data-toggle]").forEach(b=>b.onclick=()=>toggleTask(b.dataset.toggle));
+    tb.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>delTask(b.dataset.del));
+  }
+
+  async function resetPw(id){
+    const pw = prompt("Nova senha para este usuário:");
+    if (!pw) return;
+    try { await api("/api/users/"+id+"/password",{method:"PATCH",body:{password:pw}}); toast("Senha atualizada"); }
+    catch(e){ toast(e.message,true); }
+  }
+  async function delUser(id){
+    if (!confirm("Excluir este usuário? As tarefas e o histórico dele serão removidos.")) return;
+    try { await api("/api/users/"+id,{method:"DELETE"}); await loadUsers(); await loadTasks(); toast("Usuário excluído"); }
+    catch(e){ toast(e.message,true); }
+  }
+
+  async function editTask(id){
+    const t = tasks.find(x=>x.id==id);
+    const title = prompt("Título da tarefa:", t.title);
+    if (title===null) return;
+    const est = prompt("Estimativa de pomodoros:", t.estimate);
+    if (est===null) return;
+    try { await api("/api/tasks/"+id,{method:"PATCH",body:{title, estimate:parseInt(est)||1}}); await loadTasks(); toast("Tarefa atualizada"); }
+    catch(e){ toast(e.message,true); }
+  }
+  async function toggleTask(id){
+    const t = tasks.find(x=>x.id==id);
+    try { await api("/api/tasks/"+id,{method:"PATCH",body:{status: t.status==='done'?'active':'done'}}); await loadTasks(); }
+    catch(e){ toast(e.message,true); }
+  }
+  async function delTask(id){
+    if (!confirm("Excluir esta tarefa e todo o tempo registrado nela?")) return;
+    try { await api("/api/tasks/"+id,{method:"DELETE"}); await loadTasks(); toast("Tarefa excluída"); }
+    catch(e){ toast(e.message,true); }
+  }
+
+  $("#userForm").addEventListener("submit", async e=>{
+    e.preventDefault();
+    try {
+      await api("/api/users",{method:"POST",body:{
+        username:$("#nu").value, password:$("#np").value, role:$("#nr").value
+      }});
+      $("#nu").value=""; $("#np").value="";
+      await loadUsers();
+      toast("Usuário criado");
+    } catch(err){ toast(err.message,true); }
+  });
+
+  $("#taskForm").addEventListener("submit", async e=>{
+    e.preventDefault();
+    try {
+      await api("/api/tasks",{method:"POST",body:{
+        title:$("#taskTitle").value, estimate:parseInt($("#taskEst").value)||1, user_id:$("#taskOwner").value
+      }});
+      $("#taskTitle").value="";
+      await loadTasks();
+      toast("Tarefa adicionada");
+    } catch(err){ toast(err.message,true); }
+  });
+
+  $("#taskUserFilter").addEventListener("change", loadTasks);
+
+  (async ()=>{
+    me = await getMe();
+    if (!me){ location.href="/login.html"; return; }
+    if (me.role!=="admin"){ location.href="/app.html"; return; }
+    renderNav(me, "admin");
+    await loadUsers();
+    await loadTasks();
+  })();
+})();
+</script>
+</body>
+</html>

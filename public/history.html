@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Histórico — Pomofocus</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .stats { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
+  .stat { background:#fff; border-radius:10px; box-shadow:var(--shadow); padding:16px 20px; flex:1; min-width:140px; }
+  .stat .v { font-size:28px; font-weight:800; }
+  .stat .k { font-size:13px; color:var(--muted); font-weight:600; }
+  .filters { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+  .filters label { flex:1; min-width:130px; }
+  .quick { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .quick button { background:#f0f0f0; border:none; border-radius:6px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer; }
+  .quick button:hover { background:#e4e4e4; }
+</style>
+</head>
+<body>
+<div class="container wide">
+  <div class="nav" id="nav"></div>
+
+  <div class="card">
+    <h2>Filtro</h2>
+    <div class="filters">
+      <label class="field"><span>De</span><input type="date" id="from"></label>
+      <label class="field"><span>Até</span><input type="date" id="to"></label>
+      <label class="field"><span>Usuário</span><select id="user"></select></label>
+      <button class="btn btn-primary" id="applyBtn" style="flex:0 0 auto;">Aplicar</button>
+    </div>
+    <div class="quick">
+      <button data-range="today">Hoje</button>
+      <button data-range="7">Últimos 7 dias</button>
+      <button data-range="30">Últimos 30 dias</button>
+      <button data-range="month">Este mês</button>
+      <button data-range="all">Tudo</button>
+    </div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="card">
+    <h2>Tempo por tarefa e pessoa</h2>
+    <div class="table-wrap">
+      <table id="summary">
+        <thead><tr><th>Usuário</th><th>Tarefa</th><th class="num">Tempo</th><th class="num">🍅</th><th class="num">Sessões</th><th>Última atividade</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Registros detalhados</h2>
+    <div class="table-wrap">
+      <table id="detail">
+        <thead><tr><th>Início</th><th>Fim</th><th>Usuário</th><th>Tarefa</th><th class="num">Duração</th><th>Tipo</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+(function(){
+  "use strict";
+  let me=null;
+  const $ = s=>document.querySelector(s);
+  const iso = d => d.toISOString().slice(0,10);
+
+  function setRange(kind){
+    const now = new Date();
+    let from = new Date(), to = new Date();
+    if (kind==="today"){ }
+    else if (kind==="7"){ from.setDate(now.getDate()-6); }
+    else if (kind==="30"){ from.setDate(now.getDate()-29); }
+    else if (kind==="month"){ from = new Date(now.getFullYear(), now.getMonth(), 1); }
+    else if (kind==="all"){ $("#from").value=""; $("#to").value=""; return load(); }
+    $("#from").value = iso(from);
+    $("#to").value = iso(to);
+    load();
+  }
+
+  async function loadUsers(){
+    const users = await api("/api/users");
+    $("#user").innerHTML = `<option value="">Todos os usuários</option>`+
+      users.map(u=>`<option value="${u.id}">${escapeHtml(u.username)}</option>`).join("");
+  }
+
+  async function load(){
+    const p = new URLSearchParams();
+    if ($("#from").value) p.set("from", $("#from").value);
+    if ($("#to").value) p.set("to", $("#to").value);
+    if ($("#user").value) p.set("user_id", $("#user").value);
+    const data = await api("/api/history?"+p.toString());
+
+    // stats
+    const totalSec = data.summary.reduce((a,r)=>a+r.total_seconds,0);
+    const totalPomos = data.summary.reduce((a,r)=>a+r.pomodoros,0);
+    const people = new Set(data.summary.map(r=>r.username)).size;
+    $("#stats").innerHTML = `
+      <div class="stat"><div class="v">${fmtDuration(totalSec)}</div><div class="k">Tempo total focado</div></div>
+      <div class="stat"><div class="v">${totalPomos}</div><div class="k">Pomodoros concluídos</div></div>
+      <div class="stat"><div class="v">${data.summary.length}</div><div class="k">Tarefas trabalhadas</div></div>
+      <div class="stat"><div class="v">${people}</div><div class="k">Pessoas ativas</div></div>`;
+
+    // summary
+    const st = $("#summary tbody"); st.innerHTML="";
+    if (!data.summary.length){ st.innerHTML=`<tr><td colspan="6" class="empty">Nenhum registro no período.</td></tr>`; }
+    data.summary.forEach(r=>{
+      const tr=document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(r.username)}</strong></td>
+        <td>${escapeHtml(r.title)} ${r.status==='done'?'<span class="tag done">concluída</span>':''}</td>
+        <td class="num"><strong>${fmtDuration(r.total_seconds)}</strong></td>
+        <td class="num">${r.pomodoros}</td>
+        <td class="num">${r.sessions}</td>
+        <td class="muted">${fmtDateTime(r.last_at)}</td>`;
+      st.appendChild(tr);
+    });
+
+    // detail
+    const dt = $("#detail tbody"); dt.innerHTML="";
+    if (!data.detail.length){ dt.innerHTML=`<tr><td colspan="6" class="empty">Nenhum registro no período.</td></tr>`; }
+    data.detail.forEach(r=>{
+      const tr=document.createElement("tr");
+      tr.innerHTML = `
+        <td class="muted">${fmtDateTime(r.started_at)}</td>
+        <td class="muted">${fmtDateTime(r.ended_at)}</td>
+        <td>${escapeHtml(r.username)}</td>
+        <td>${escapeHtml(r.title)}</td>
+        <td class="num">${fmtDuration(r.seconds)}</td>
+        <td>${r.completed?'<span class="tag done">Pomodoro</span>':'<span class="tag active">Parcial</span>'}</td>`;
+      dt.appendChild(tr);
+    });
+  }
+
+  $("#applyBtn").onclick = load;
+  document.querySelectorAll(".quick button").forEach(b=>b.onclick=()=>setRange(b.dataset.range));
+
+  (async ()=>{
+    me = await getMe();
+    if (!me){ location.href="/login.html"; return; }
+    if (me.role!=="admin"){ location.href="/app.html"; return; }
+    renderNav(me, "history");
+    await loadUsers();
+    setRange("30");
+  })();
+})();
+</script>
+</body>
+</html>

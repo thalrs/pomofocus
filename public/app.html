@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pomofocus — Timer</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .timer-card { background: var(--panel); border-radius: 10px; padding: 26px 0 34px; text-align: center; }
+  .time { font-size: 118px; font-weight: 800; line-height: 1; letter-spacing: 2px; margin: 6px 0 22px; }
+  .mode-label { font-size: 14px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; background: rgba(0,0,0,.15); display:inline-block; padding: 6px 14px; border-radius: 6px; }
+  .start-btn {
+    background: #fff; color: var(--red); border: none; border-radius: 6px; height: 55px; min-width: 200px;
+    font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; cursor: pointer;
+    box-shadow: rgba(0,0,0,.2) 0 6px 0; transition: transform .08s;
+  }
+  .start-btn:active { transform: translateY(4px); box-shadow: rgba(0,0,0,.2) 0 2px 0; }
+  .start-btn.running { transform: translateY(4px); box-shadow: none; }
+  .status { text-align:center; margin-top: 30px; opacity: .95; }
+  .status .count { font-size: 16px; opacity: .7; }
+  .status .msg { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .gear { background: var(--panel); border:none; color:#fff; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:600; font-size:13px; margin-top:16px; }
+
+  .tasks { margin-top: 34px; }
+  .tasks-head { display:flex; justify-content:space-between; align-items:center; border-bottom: 2px solid rgba(255,255,255,.35); padding-bottom: 10px; margin-bottom: 16px; }
+  .tasks-head h2 { font-size: 17px; }
+  .task {
+    background:#fff; color:#4a4a4a; border-radius:8px; padding:14px 16px; margin-bottom:10px;
+    display:flex; align-items:center; gap:12px; border-left:6px solid transparent; cursor:pointer;
+  }
+  .task.active { border-left-color: var(--red); }
+  .task.done .t-name { text-decoration: line-through; opacity:.5; }
+  .t-name { flex:1; font-weight:600; }
+  .t-meta { display:flex; flex-direction:column; align-items:flex-end; font-size:13px; color:#999; font-weight:700; line-height:1.3; }
+  .t-time { color: var(--red); }
+  .add-task { width:100%; background: rgba(255,255,255,.12); border:2px dashed rgba(255,255,255,.5); border-radius:8px; color:#fff; padding:16px; font-weight:800; cursor:pointer; }
+  .add-task:hover { background: rgba(255,255,255,.2); }
+  .task-form { background:#fff; color:#4a4a4a; border-radius:8px; padding:16px; margin-bottom:10px; }
+  .task-form input { margin-bottom: 10px; }
+  .task-form .actions { display:flex; justify-content:flex-end; gap:10px; }
+</style>
+</head>
+<body class="red">
+<div class="container">
+  <div class="nav" id="nav"></div>
+
+  <div class="timer-card">
+    <div class="mode-label">Pomodoro</div>
+    <div class="time" id="time">25:00</div>
+    <button class="start-btn" id="startBtn">Começar</button>
+    <div><button class="gear" id="gearBtn">⚙ Duração do foco</button></div>
+  </div>
+
+  <div class="status">
+    <div class="count">#<span id="pomoCount">1</span></div>
+    <div class="msg" id="statusMsg">Hora de focar!</div>
+  </div>
+
+  <div class="tasks">
+    <div class="tasks-head"><h2>Minhas tarefas</h2></div>
+    <div id="taskList"></div>
+    <div id="formSlot"></div>
+    <button class="add-task" id="addTaskBtn">✚ Adicionar tarefa</button>
+  </div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+(function(){
+  "use strict";
+  let me = null;
+  let tasks = [];
+  let activeTaskId = null;
+
+  let focusMin = parseInt(localStorage.getItem("focusMin")) || 25;
+  const state = { running:false, remaining: focusMin*60, elapsed:0, runStartTs:null, intervalId:null, pomo:1 };
+
+  const $ = s => document.querySelector(s);
+  const timeEl = $("#time"), startBtn = $("#startBtn"), statusMsg = $("#statusMsg"), pomoCountEl = $("#pomoCount");
+
+  function render(){
+    const m = Math.floor(state.remaining/60), s = state.remaining%60;
+    const str = String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
+    timeEl.textContent = str;
+    document.title = str + " — Pomofocus";
+    pomoCountEl.textContent = state.pomo;
+    startBtn.textContent = state.running ? "Pausar" : "Começar";
+    startBtn.classList.toggle("running", state.running);
+    const t = tasks.find(t=>t.id===activeTaskId);
+    statusMsg.textContent = t ? ("Focando: " + t.title) : "Selecione uma tarefa e foque!";
+  }
+
+  function tick(){
+    if (state.remaining > 0){ state.remaining--; state.elapsed++; render(); }
+    else complete();
+  }
+  function start(){
+    if (state.running) return;
+    state.running = true;
+    if (!state.runStartTs) state.runStartTs = new Date().toISOString();
+    state.intervalId = setInterval(tick, 1000);
+    render();
+  }
+  function pause(){
+    if (!state.running) return;
+    clearInterval(state.intervalId); state.intervalId=null; state.running=false;
+    flush(false);
+    render();
+  }
+  function toggle(){ state.running ? pause() : start(); }
+
+  async function flush(completed){
+    const sec = state.elapsed;
+    const taskId = activeTaskId;
+    const startTs = state.runStartTs;
+    state.elapsed = 0; state.runStartTs = null;
+    if (!taskId || sec < 1) return;
+    try {
+      await api("/api/tasks/"+taskId+"/sessions", {
+        method:"POST",
+        body:{ seconds: sec, completed: !!completed, started_at: startTs, ended_at: new Date().toISOString() }
+      });
+      await loadTasks();
+    } catch(e){ toast(e.message, true); }
+  }
+
+  function complete(){
+    clearInterval(state.intervalId); state.intervalId=null; state.running=false;
+    playSound();
+    flush(true).then(()=>{
+      state.pomo++;
+      state.remaining = focusMin*60;
+      render();
+    });
+  }
+
+  // ------ Tasks ------
+  async function loadTasks(){
+    tasks = await api("/api/tasks");
+    if (!tasks.find(t=>t.id===activeTaskId)) {
+      const firstActive = tasks.find(t=>t.status!=="done");
+      activeTaskId = firstActive ? firstActive.id : null;
+    }
+    renderTasks();
+    render();
+  }
+  function renderTasks(){
+    const list = $("#taskList");
+    list.innerHTML = "";
+    if (!tasks.length){
+      list.innerHTML = '<div class="task" style="cursor:default;justify-content:center;color:#aaa;">Nenhuma tarefa ainda. Adicione uma abaixo 👇</div>';
+      return;
+    }
+    tasks.forEach(t=>{
+      const div = document.createElement("div");
+      div.className = "task"+(t.status==="done"?" done":"")+(t.id===activeTaskId?" active":"");
+      div.innerHTML = `
+        <span class="t-name">${escapeHtml(t.title)}</span>
+        <span class="t-meta">
+          <span>${t.pomos_done}/${t.estimate} 🍅</span>
+          <span class="t-time">${fmtDuration(t.total_seconds)}</span>
+        </span>`;
+      div.onclick = async ()=>{
+        if (t.id===activeTaskId) return;
+        if (state.running || state.elapsed>0) await flush(false);
+        activeTaskId = t.id;
+        state.remaining = focusMin*60;
+        renderTasks(); render();
+      };
+      list.appendChild(div);
+    });
+  }
+
+  function showForm(){
+    $("#addTaskBtn").style.display="none";
+    $("#formSlot").innerHTML = `
+      <div class="task-form">
+        <input type="text" id="taskInput" placeholder="No que você vai trabalhar?" autocomplete="off">
+        <div class="row" style="align-items:flex-end;">
+          <label class="field" style="max-width:150px;"><span>Estimativa (🍅)</span><input type="number" id="taskEst" value="1" min="1" max="50"></label>
+          <div class="actions" style="flex:2;">
+            <button class="btn btn-ghost" id="cancelTask">Cancelar</button>
+            <button class="btn btn-primary" id="saveTask">Salvar</button>
+          </div>
+        </div>
+      </div>`;
+    const input = $("#taskInput"); input.focus();
+    input.addEventListener("keydown", e=>{ if(e.key==="Enter") saveTask(); });
+    $("#saveTask").onclick = saveTask;
+    $("#cancelTask").onclick = hideForm;
+  }
+  function hideForm(){ $("#formSlot").innerHTML=""; $("#addTaskBtn").style.display="block"; }
+  async function saveTask(){
+    const title = $("#taskInput").value.trim();
+    const estimate = parseInt($("#taskEst").value)||1;
+    if (!title) return;
+    try {
+      await api("/api/tasks", { method:"POST", body:{ title, estimate } });
+      hideForm();
+      await loadTasks();
+      toast("Tarefa adicionada");
+    } catch(e){ toast(e.message, true); }
+  }
+
+  // ------ Sound ------
+  let audioCtx=null;
+  function playSound(){
+    try {
+      audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+      const now = audioCtx.currentTime;
+      [0,.25,.5].forEach(off=>{
+        const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+        o.type="sine"; o.frequency.setValueAtTime(880, now+off);
+        g.gain.setValueAtTime(.001, now+off);
+        g.gain.exponentialRampToValueAtTime(.4, now+off+.02);
+        g.gain.exponentialRampToValueAtTime(.001, now+off+.2);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(now+off); o.stop(now+off+.22);
+      });
+    } catch(e){}
+  }
+
+  // Flush parcial ao sair da página
+  function beaconFlush(){
+    if (!activeTaskId || state.elapsed<1) return;
+    const body = JSON.stringify({ seconds: state.elapsed, completed:false, started_at: state.runStartTs, ended_at: new Date().toISOString() });
+    navigator.sendBeacon("/api/tasks/"+activeTaskId+"/sessions", new Blob([body], {type:"application/json"}));
+    state.elapsed=0; state.runStartTs=null;
+  }
+  window.addEventListener("beforeunload", beaconFlush);
+  document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="hidden" && !state.running) beaconFlush(); });
+
+  // ------ Events ------
+  startBtn.onclick = toggle;
+  $("#addTaskBtn").onclick = showForm;
+  $("#gearBtn").onclick = ()=>{
+    const v = prompt("Duração do foco em minutos (1 a 180):", focusMin);
+    if (v===null) return;
+    const n = Math.max(1, Math.min(180, parseInt(v)||focusMin));
+    focusMin = n; localStorage.setItem("focusMin", n);
+    if (!state.running){ state.remaining = focusMin*60; render(); }
+    toast("Duração ajustada para "+n+" min");
+  };
+  document.addEventListener("keydown", e=>{
+    if (e.code==="Space" && e.target.tagName!=="INPUT"){ e.preventDefault(); toggle(); }
+  });
+
+  // ------ Init ------
+  (async ()=>{
+    me = await getMe();
+    if (!me){ location.href="/login.html"; return; }
+    renderNav(me, "app");
+    await loadTasks();
+    render();
+  })();
+})();
+</script>
+</body>
+</html>

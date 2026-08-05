@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Entrar — Pomofocus</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  body.red { display: flex; align-items: center; justify-content: center; }
+  .login-card {
+    background: #fff; color: var(--ink); border-radius: 12px; box-shadow: var(--shadow);
+    padding: 32px; width: 100%; max-width: 360px;
+  }
+  .login-card .brand { justify-content: center; color: var(--red); margin-bottom: 6px; font-size: 22px; }
+  .login-card p.sub { text-align: center; color: var(--muted); margin-bottom: 22px; font-size: 14px; }
+  .login-card .btn { width: 100%; margin-top: 8px; }
+  .err-msg { color: var(--red); font-size: 14px; text-align: center; margin-top: 12px; min-height: 18px; }
+</style>
+</head>
+<body class="red">
+  <form class="login-card" id="loginForm">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 13V9M12 5V3M9 3h6"/></svg>
+      Pomofocus
+    </div>
+    <p class="sub">Entre para acompanhar seu foco</p>
+    <label class="field"><span>Usuário</span><input type="text" id="username" autocomplete="username" autofocus></label>
+    <label class="field"><span>Senha</span><input type="password" id="password" autocomplete="current-password"></label>
+    <button type="submit" class="btn btn-red">Entrar</button>
+    <div class="err-msg" id="err"></div>
+  </form>
+<script src="/common.js"></script>
+<script>
+  const form = document.getElementById("loginForm");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    document.getElementById("err").textContent = "";
+    try {
+      const me = await api("/api/login", {
+        method: "POST",
+        body: {
+          username: document.getElementById("username").value,
+          password: document.getElementById("password").value,
+        },
+      });
+      location.href = me.role === "admin" ? "/admin.html" : "/app.html";
+    } catch (err) {
+      document.getElementById("err").textContent = err.message;
+    }
+  });
+  // Se já estiver logado, redireciona
+  getMe().then((me) => { if (me) location.href = me.role === "admin" ? "/admin.html" : "/app.html"; });
+</script>
+</body>
+</html>
