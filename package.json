@@ -1,0 +1,13 @@
+{
+  "name": "pomofocus",
+  "version": "1.0.0",
+  "description": "Timer Pomodoro estilo pomofocus.io",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
